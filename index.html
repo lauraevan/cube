@@ -1,0 +1,597 @@
+<div id="ascii-cube-wrap">
+  <pre id="ascii-cube"></pre>
+</div>
+
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent !important;
+  }
+
+  #ascii-cube-wrap {
+    width: 100%;
+    height: 100%;
+    min-height: 340px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    overflow: hidden;
+    background: transparent;
+  }
+
+  #ascii-cube {
+    margin: 0;
+    padding: 0;
+
+    color: #fff;
+    background: transparent;
+
+    font-family:
+      Menlo,
+      Monaco,
+      Consolas,
+      "Liberation Mono",
+      "Courier New",
+      monospace;
+
+    font-size: 10px;
+    line-height: 10px;
+    font-weight: 400;
+    letter-spacing: 0;
+
+    white-space: pre;
+
+    transform-origin: center center;
+
+    user-select: none;
+    -webkit-user-select: none;
+
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeSpeed;
+  }
+</style>
+
+<script>
+(() => {
+  "use strict";
+
+  /*
+    High-fidelity single-cube browser port of:
+    https://github.com/tarantino07/cube.c
+
+    Original: tarantino07
+
+    Only intentional changes:
+      • one cube instead of three
+      • spaces instead of "." background
+      • centered fixed viewport
+      • moderate rotation speed
+  */
+
+  const WIDTH = 160;
+  const HEIGHT = 44;
+
+  const SIZE = WIDTH * HEIGHT;
+
+  const CUBE_WIDTH = 20;
+
+  const DISTANCE_FROM_CAM = 100;
+
+  const K1 = 40;
+
+  const INCREMENT_SPEED = 0.6;
+
+  /*
+    Fixed crop.
+
+    Unlike my previous version,
+    this DOES NOT resize itself
+    based on the cube every frame.
+
+    That was causing ugly jitter.
+  */
+
+  const CROP_WIDTH = 72;
+  const CROP_HEIGHT = 32;
+
+  const CROP_X =
+    Math.floor(
+      WIDTH / 2 -
+      CROP_WIDTH / 2
+    );
+
+  const CROP_Y =
+    Math.floor(
+      HEIGHT / 2 -
+      CROP_HEIGHT / 2
+    );
+
+
+  /*
+    Actual C source uses:
+
+      float zBuffer[...]
+
+    Float32Array matches that much
+    more closely than Float64.
+  */
+
+  const zBuffer =
+    new Float32Array(SIZE);
+
+  const buffer =
+    new Array(SIZE);
+
+
+  let A = 0.35;
+  let B = 0.35;
+  let C = 0;
+
+
+  /*
+    Medium speed.
+
+    Original C is about:
+      A += .05 / 16 ms
+
+    That felt too fast in a webpage.
+
+    Previous slow version was
+    dramatically slower.
+
+    These values give roughly
+    a 5.7 second major rotation.
+  */
+
+  const ROTATE_A = 1.10;
+  const ROTATE_B = 1.10;
+  const ROTATE_C = 0.22;
+
+
+  const screen =
+    document.getElementById(
+      "ascii-cube"
+    );
+
+  const wrap =
+    document.getElementById(
+      "ascii-cube-wrap"
+    );
+
+
+  /*
+    IMPORTANT:
+
+    cube.c declares these as:
+
+      calculateX(int i, int j, int k)
+
+    even though cubeX/cubeY are floats.
+
+    C therefore truncates the floats
+    before doing the rotation.
+
+    This is necessary to reproduce
+    the original ASCII appearance.
+  */
+
+  function calculateX(i, j, k) {
+    return (
+      j * Math.sin(A) * Math.sin(B) * Math.cos(C)
+      -
+      k * Math.cos(A) * Math.sin(B) * Math.cos(C)
+      +
+      j * Math.cos(A) * Math.sin(C)
+      +
+      k * Math.sin(A) * Math.sin(C)
+      +
+      i * Math.cos(B) * Math.cos(C)
+    );
+  }
+
+
+  function calculateY(i, j, k) {
+    return (
+      j * Math.cos(A) * Math.cos(C)
+      +
+      k * Math.sin(A) * Math.cos(C)
+      -
+      j * Math.sin(A) * Math.sin(B) * Math.sin(C)
+      +
+      k * Math.cos(A) * Math.sin(B) * Math.sin(C)
+      -
+      i * Math.cos(B) * Math.sin(C)
+    );
+  }
+
+
+  function calculateZ(i, j, k) {
+    return (
+      k * Math.cos(A) * Math.cos(B)
+      -
+      j * Math.sin(A) * Math.cos(B)
+      +
+      i * Math.sin(B)
+    );
+  }
+
+
+  function calculateForSurface(
+    cubeX,
+    cubeY,
+    cubeZ,
+    character
+  ) {
+
+    /*
+      Replicate C float -> int
+      argument conversion.
+
+      Math.trunc() matches C's
+      truncation toward zero.
+    */
+
+    const i =
+      Math.trunc(cubeX);
+
+    const j =
+      Math.trunc(cubeY);
+
+    const k =
+      Math.trunc(cubeZ);
+
+
+    const x =
+      calculateX(i, j, k);
+
+    const y =
+      calculateY(i, j, k);
+
+    const z =
+      calculateZ(i, j, k)
+      +
+      DISTANCE_FROM_CAM;
+
+
+    const ooz =
+      1 / z;
+
+
+    /*
+      Exact projection formula
+      from cube.c.
+
+      No horizontalOffset because
+      we're drawing one centered cube.
+    */
+
+    const xp =
+      Math.trunc(
+        WIDTH / 2
+        +
+        K1 * ooz * x * 2
+      );
+
+
+    const yp =
+      Math.trunc(
+        HEIGHT / 2
+        +
+        K1 * ooz * y
+      );
+
+
+    const idx =
+      xp +
+      yp * WIDTH;
+
+
+    /*
+      Same combined-index check
+      used by cube.c.
+    */
+
+    if (
+      idx >= 0 &&
+      idx < SIZE
+    ) {
+
+      if (
+        ooz >
+        zBuffer[idx]
+      ) {
+
+        zBuffer[idx] =
+          ooz;
+
+        buffer[idx] =
+          character;
+
+      }
+
+    }
+
+  }
+
+
+  function buildCube() {
+
+    /*
+      Original uses "." here.
+
+      Blank space gives you the
+      requested transparent/no-ASCII
+      background without changing
+      the cube itself.
+    */
+
+    buffer.fill(" ");
+
+    zBuffer.fill(0);
+
+
+    for (
+      let cubeX = -CUBE_WIDTH;
+      cubeX < CUBE_WIDTH;
+      cubeX += INCREMENT_SPEED
+    ) {
+
+      for (
+        let cubeY = -CUBE_WIDTH;
+        cubeY < CUBE_WIDTH;
+        cubeY += INCREMENT_SPEED
+      ) {
+
+        /*
+          EXACT same six surfaces
+          and characters as repo.
+        */
+
+        calculateForSurface(
+          cubeX,
+          cubeY,
+          -CUBE_WIDTH,
+          "@"
+        );
+
+        calculateForSurface(
+          CUBE_WIDTH,
+          cubeY,
+          cubeX,
+          "$"
+        );
+
+        calculateForSurface(
+          -CUBE_WIDTH,
+          cubeY,
+          -cubeX,
+          "~"
+        );
+
+        calculateForSurface(
+          -cubeX,
+          cubeY,
+          CUBE_WIDTH,
+          "#"
+        );
+
+        calculateForSurface(
+          cubeX,
+          -CUBE_WIDTH,
+          -cubeY,
+          ";"
+        );
+
+        calculateForSurface(
+          cubeX,
+          CUBE_WIDTH,
+          cubeY,
+          "+"
+        );
+
+      }
+
+    }
+
+  }
+
+
+  function makeOutput() {
+
+    const lines =
+      new Array(CROP_HEIGHT);
+
+
+    for (
+      let row = 0;
+      row < CROP_HEIGHT;
+      row++
+    ) {
+
+      const y =
+        CROP_Y + row;
+
+      let line = "";
+
+
+      for (
+        let col = 0;
+        col < CROP_WIDTH;
+        col++
+      ) {
+
+        const x =
+          CROP_X + col;
+
+        line +=
+          buffer[
+            x +
+            y * WIDTH
+          ];
+
+      }
+
+
+      lines[row] =
+        line;
+
+    }
+
+
+    return lines.join("\n");
+
+  }
+
+
+  function render() {
+
+    buildCube();
+
+    screen.textContent =
+      makeOutput();
+
+  }
+
+
+  /*
+    Scale the FIXED terminal window.
+
+    Since its dimensions never change,
+    the cube doesn't pulse/jump in size.
+  */
+
+  function fit() {
+
+    screen.style.transform =
+      "scale(1)";
+
+
+    const terminal =
+      screen.getBoundingClientRect();
+
+    const container =
+      wrap.getBoundingClientRect();
+
+
+    if (
+      !terminal.width ||
+      !terminal.height ||
+      !container.width ||
+      !container.height
+    ) {
+      return;
+    }
+
+
+    const scale =
+      Math.min(
+
+        (
+          container.width *
+          0.95
+        )
+        /
+        terminal.width,
+
+        (
+          container.height *
+          0.95
+        )
+        /
+        terminal.height
+
+      );
+
+
+    screen.style.transform =
+      `scale(${scale})`;
+
+  }
+
+
+  /*
+    Time-based animation.
+
+    This means a 120 Hz iPad,
+    60 Hz Chromebook, etc.
+    all rotate at the same speed.
+  */
+
+  let lastTime =
+    performance.now();
+
+
+  function animate(now) {
+
+    let dt =
+      (
+        now -
+        lastTime
+      )
+      /
+      1000;
+
+
+    lastTime =
+      now;
+
+
+    /*
+      Avoid a giant jump if the
+      browser suspends the tab.
+    */
+
+    if (dt > 0.05) {
+      dt = 0.05;
+    }
+
+
+    A +=
+      ROTATE_A * dt;
+
+    B +=
+      ROTATE_B * dt;
+
+    C +=
+      ROTATE_C * dt;
+
+
+    render();
+
+
+    requestAnimationFrame(
+      animate
+    );
+
+  }
+
+
+  window.addEventListener(
+    "resize",
+    fit
+  );
+
+
+  render();
+
+
+  requestAnimationFrame(
+    () => {
+
+      fit();
+
+      requestAnimationFrame(
+        animate
+      );
+
+    }
+  );
+
+})();
+</script>
